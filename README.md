@@ -2,7 +2,7 @@
 
 This project demonstrates the implementation of a Gelato Safe module to enable Safe signless Ux.
 
-<img src="docs/flow.png" width="400">
+<img src="docs/safe-flow-signless.png" width="400">
 
 The most important files to look at are:
 
@@ -31,17 +31,17 @@ Please copy .env.example to .env and add GELATO_RELAY_API_KEY, PK, ALCHEMY_ID an
    
    a) Enable Gelato Safe Module Module
    ```
-   npx hardhat runs scripts/01-enableModule.ts
+   npx hardhat run scripts/01-enableModule.ts
    ```
 
    b)Whitelist Transaction
    ```
-   npx hardhat runs scripts/02-whitelistTx.ts
+   npx hardhat run scripts/02-whitelistTx.ts
    ```
 
    c)Create Session
    ```
-   npx hardhat runs scripts/03-createSession.ts
+   npx hardhat run scripts/03-createSession.ts
    ```
 
    d) Execute the transaction
@@ -49,11 +49,11 @@ Please copy .env.example to .env and add GELATO_RELAY_API_KEY, PK, ALCHEMY_ID an
    Copy from the previous logs the sessionId and the temPublic in [here](/scripts/04-execute.ts#L62)
 
    ```
-   npx hardhat runs scripts/04-execute.ts
+   npx hardhat run scripts/04-execute.ts
    ```
 
    e) Multisend (a,b,c) together
    
    ```
-   npx hardhat runs scripts/05-multiSend.ts
+   npx hardhat run scripts/05-multiSend.ts
    ```
