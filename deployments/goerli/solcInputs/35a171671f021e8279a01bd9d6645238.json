@@ -1,0 +1,44 @@
+{
+  "language": "Solidity",
+  "sources": {
+    "@gelatonetwork/relay-context/contracts/vendor/ERC2771Context.sol": {
+      "content": "// SPDX-License-Identifier: MIT\n// OpenZeppelin Contracts (last updated v4.7.0) (metatx/ERC2771Context.sol)\n\npragma solidity ^0.8.1;\n\n/**\n * @dev Context variant with ERC2771 support.\n */\n// based on https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/metatx/ERC2771Context.sol\nabstract contract ERC2771Context {\n    address private immutable _trustedForwarder;\n\n    constructor(address trustedForwarder) {\n        _trustedForwarder = trustedForwarder;\n    }\n\n    function isTrustedForwarder(address forwarder)\n        public\n        view\n        virtual\n        returns (bool)\n    {\n        return forwarder == _trustedForwarder;\n    }\n\n    function _msgSender() internal view virtual returns (address sender) {\n        if (isTrustedForwarder(msg.sender)) {\n            // The assembly code is more direct than the Solidity version using `abi.decode`.\n            /// @solidity memory-safe-assembly\n            assembly {\n                sender := shr(96, calldataload(sub(calldatasize(), 20)))\n            }\n        } else {\n            return msg.sender;\n        }\n    }\n\n    function _msgData() internal view virtual returns (bytes calldata) {\n        if (isTrustedForwarder(msg.sender)) {\n            return msg.data[:msg.data.length - 20];\n        } else {\n            return msg.data;\n        }\n    }\n}\n"
+    },
+    "contracts/Counter.sol": {
+      "content": "// SPDX-License-Identifier: MIT\npragma solidity 0.8.19;\n\nimport {\n    ERC2771Context\n} from \"@gelatonetwork/relay-context/contracts/vendor/ERC2771Context.sol\";\n\ncontract Counter is ERC2771Context {\n    mapping(address => uint256) public counter;\n\n\n    constructor(address _trustedForwarder) ERC2771Context(_trustedForwarder) {\n    }\n\n    function increment() external {\n        address msgSender = _msgSender();\n        counter[msgSender]++;\n    }\n\n\n}\n"
+    },
+    "contracts/SessionKeyGate.sol": {
+      "content": "// SPDX-License-Identifier: MIT\npragma solidity 0.8.19;\n\nimport {GelatoBytes} from \"./vendor/gelato/GelatoBytes.sol\";\nimport {\n    ERC2771Context\n} from \"@gelatonetwork/relay-context/contracts/vendor/ERC2771Context.sol\";\n\nstruct SessionGate {\n    uint256 end;\n    address user;\n    address tempPublicKey;\n}\n\ncontract SessionKeyGate is ERC2771Context {\n    mapping(bytes32 => SessionGate) public sessions;\n\n    //// TrustedForwarder is Gelato 1Balance ERC2771\n    constructor(address _trustedForwarder) ERC2771Context(_trustedForwarder) {}\n\n    function createSession(\n        string memory _sessionId,\n        uint256 _duration,\n        address _tmpPublicKey\n    ) external {\n        require(isTrustedForwarder(msg.sender), \"onlyGelatoRelayERC2771\");\n        sessions[bytes32(abi.encodePacked(_sessionId))] = SessionGate(\n            block.timestamp + _duration,\n            _msgSender(),\n            _tmpPublicKey\n        );\n    }\n\n    function executeCall(\n        address _target,\n        bytes calldata _data,\n        uint256 _value,\n        string memory _sessionId\n    ) external {\n        SessionGate memory _sessionGate = sessions[\n            bytes32(abi.encodePacked(_sessionId))\n        ];\n        require(_sessionGate.user != address(0), 'session.nit.init');\n        require(_sessionGate.tempPublicKey == _msgSender(), 'tempKey.not.allowed');\n        require(_sessionGate.end >= block.timestamp, 'tempKey.experid');\n\n\n        bytes memory _dataWithUser = abi.encodePacked(_data, _sessionGate.user);\n\n        (, bytes memory returnData) = _call(\n            _target,\n            _dataWithUser,\n            _value,\n            true,\n            \"SessionKeyGate.executeCall: \"\n        );\n    }\n\n    function _call(\n        address _add,\n        bytes memory _data,\n        uint256 _value,\n        bool _revertOnFailure,\n        string memory _tracingInfo\n    ) internal returns (bool success, bytes memory returnData) {\n        (success, returnData) = _add.call{value: _value}(_data);\n\n        if (!success && _revertOnFailure)\n            GelatoBytes.revertWithError(returnData, _tracingInfo);\n    }\n}\n"
+    },
+    "contracts/vendor/gelato/GelatoBytes.sol": {
+      "content": "// SPDX-License-Identifier: UNLICENSED\npragma solidity ^0.8.12;\n\nlibrary GelatoBytes {\n    function calldataSliceSelector(bytes calldata _bytes)\n        internal\n        pure\n        returns (bytes4 selector)\n    {\n        selector =\n            _bytes[0] |\n            (bytes4(_bytes[1]) >> 8) |\n            (bytes4(_bytes[2]) >> 16) |\n            (bytes4(_bytes[3]) >> 24);\n    }\n\n    function memorySliceSelector(bytes memory _bytes)\n        internal\n        pure\n        returns (bytes4 selector)\n    {\n        selector =\n            _bytes[0] |\n            (bytes4(_bytes[1]) >> 8) |\n            (bytes4(_bytes[2]) >> 16) |\n            (bytes4(_bytes[3]) >> 24);\n    }\n\n    function revertWithError(bytes memory _bytes, string memory _tracingInfo)\n        internal\n        pure\n    {\n        // 68: 32-location, 32-length, 4-ErrorSelector, UTF-8 err\n        if (_bytes.length % 32 == 4) {\n            bytes4 selector;\n            assembly {\n                selector := mload(add(0x20, _bytes))\n            }\n            if (selector == 0x08c379a0) {\n                // Function selector for Error(string)\n                assembly {\n                    _bytes := add(_bytes, 68)\n                }\n                revert(string(abi.encodePacked(_tracingInfo, string(_bytes))));\n            } else {\n                revert(\n                    string(abi.encodePacked(_tracingInfo, \"NoErrorSelector\"))\n                );\n            }\n        } else {\n            revert(\n                string(abi.encodePacked(_tracingInfo, \"UnexpectedReturndata\"))\n            );\n        }\n    }\n\n    function returnError(bytes memory _bytes, string memory _tracingInfo)\n        internal\n        pure\n        returns (string memory)\n    {\n        // 68: 32-location, 32-length, 4-ErrorSelector, UTF-8 err\n        if (_bytes.length % 32 == 4) {\n            bytes4 selector;\n            assembly {\n                selector := mload(add(0x20, _bytes))\n            }\n            if (selector == 0x08c379a0) {\n                // Function selector for Error(string)\n                assembly {\n                    _bytes := add(_bytes, 68)\n                }\n                return string(abi.encodePacked(_tracingInfo, string(_bytes)));\n            } else {\n                return\n                    string(abi.encodePacked(_tracingInfo, \"NoErrorSelector\"));\n            }\n        } else {\n            return\n                string(abi.encodePacked(_tracingInfo, \"UnexpectedReturndata\"));\n        }\n    }\n}"
+    }
+  },
+  "settings": {
+    "optimizer": {
+      "enabled": false,
+      "runs": 200
+    },
+    "outputSelection": {
+      "*": {
+        "*": [
+          "abi",
+          "evm.bytecode",
+          "evm.deployedBytecode",
+          "evm.methodIdentifiers",
+          "metadata",
+          "devdoc",
+          "userdoc",
+          "storageLayout",
+          "evm.gasEstimates"
+        ],
+        "": [
+          "ast"
+        ]
+      }
+    },
+    "metadata": {
+      "useLiteralContent": true
+    }
+  }
+}
